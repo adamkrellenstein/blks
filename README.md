@@ -34,7 +34,7 @@ or
 
 # Usage
 
-* `blks` has two primary modes: **write** and **read**. `blks write TARGET K` prints to stdout a CSV table that describes the K blocks; `blks read TARGET` reads such a CSV from stdin and prints to stdout a new CSV which identifies the location of each of the described blocks, if it was indeed found in the second file. If a block that exists in the first file cannot be found in the second, then the ‘location’ of that block is ‘None’.
+* `blks` has two primary modes: **write** and **read**. `blks write TARGET K` prints to stdout a CSV table that describes the `K` blocks; `blks read TARGET` reads such a CSV from stdin and prints to stdout a new CSV which identifies the location of each of the described blocks, if it was indeed found in the second file. If a block that exists in the first file cannot be found in the second, then the ‘location’ of that block is `None`.
 
 * For command‐line options and switches, see `blks --help`, `blks write --help` and `blks read --help`.
 
@@ -101,7 +101,7 @@ fi
 
 * Examine how the parts of file change over time.
 
-	See file ‘foo’ divided into five blocks:
+	See file `foo` divided into five blocks:
 
 		$ blks.py write foo 5 > foo.blks
 		$ cat foo.blks
@@ -112,11 +112,11 @@ fi
 		4,6558520,DbiY8hLv3zDKKD0Jf23v,257f08b0f1fa249183bbc5ab6a3b78e808c5ce72
 		5,6558496,yY+KoBW3GbftcBlLtuAV,b55006652e4caaf8c3d893685e4b217061ea0d3b
 
-	Change ‘foo’ somewhere in the fourth block (e.g. using `hexedit(1)`):
+	Change `foo` somewhere in the fourth block (e.g. using `hexedit(1)`):
 
 		$ hexedit foo
 
-	Try to find each of the original blocks in the new version of ‘foo’:
+	Try to find each of the original blocks in the new version of `foo`:
 
 		$ blks.py read foo < foo.blks
 		number,size,location
@@ -126,7 +126,7 @@ fi
 		4,6558520,None
 		5,6558496,26234080
 
-* Compare files ‘spam’ and ‘eggs’ block‐wise, with resolution equal to the size of ‘spam’ divided by three.
+* Compare files `spam` and `eggs` block‐wise, with resolution equal to the size of `spam` divided by three.
 
 		$ blks write spam 6 | blks read eggs
 		number,size,location
@@ -137,9 +137,9 @@ fi
 		5,5465432,None
 		6,5465416,27327160
 
-	So ‘spam’ and ‘eggs’ differ exactly in the first and fifth blocks.
+	So `spam` and `eggs` differ exactly in the first and fifth blocks.
 
-* Divide ‘bar’ into nine‐hundred parts, identifying blocks by their first three bytes, and hashing with MD5:
+* Divide `bar` into nine‐hundred parts, identifying blocks by their first three bytes, and hashing with MD5:
 
 		$ blks.py write bar 9 --excerpt-size=3 --hash-algorithm=md5 
 		number,size,excerpt,md5
