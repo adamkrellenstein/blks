@@ -82,17 +82,19 @@ or
 
 * Note that `blks read` won’t tell you (directly) if there is data beyond the last share (or before the first). The following script will do that:
 
-	#!/bin/bash
+```
+#!/bin/bash
 
-	result=$(blks read $foo $k < "$catalogue")
+result=$(blks read $foo $k < "$catalogue")
 
-	if ! [ $(echo "$result" | head -n 2 | tail -n 1 | cut -f 3) == 0 ]; then echo "Data precede first share."; fi
+if ! [ $(echo "$result" | head -n 2 | tail -n 1 | cut -f 3) == 0 ]; then echo "Data precede first share."; fi
 
-	last_share_location=$(echo "$result" | tail -n 1 | cut -f 3)
-	if ! [ "$last_share_location" == "None" ]; then
-		last_share_size=$(echo "$result" | tail -n 1 | cut -f 2)
-		if [ $(($last_share_location + $last_share_size)) -lt $(stat -c %s "$foo") ]; then echo "Data succeed last share."; fi
-	fi
+last_share_location=$(echo "$result" | tail -n 1 | cut -f 3)
+if ! [ "$last_share_location" == "None" ]; then
+	last_share_size=$(echo "$result" | tail -n 1 | cut -f 2)
+	if [ $(($last_share_location + $last_share_size)) -lt $(stat -c %s "$foo") ]; then echo "Data succeed last share."; fi
+fi
+```
 
 
 # Examples
