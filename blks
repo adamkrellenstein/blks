@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+
+
+import sys
+import os
+import math
+
+import base64
+import hashlib
+import csv
+import argparse
+
+import bitstring
+
+
+def get_block_hash (bitstream, block_location, block_size, hash_algorithm,
+              segment_size = 2**21):
+
+    # Empty blocks are a special case.
+    if not block_size:
+        return ''
+
+    # Initialise hash digest (the algorithm is read from the input CSV).
+    if hash_algorithm in hashlib.algorithms_available:
+        hash_state = eval('hashlib.new(\'' + hash_algorithm + '\')')
+    else:
+        print("ERROR: The specified hash algorithm (‘%s’) is not available." 
+                    % hash_algorithm,
+              file=sys.stderr)
+        print('Use one of the following:', 
+              hashlib.algorithms_available, '.', file=sys.stderr)
+        exit(64)
+
+    # Update the hash a little at a time (to conserve memory).
+    bitstream.pos = block_location
+    total_segments = int(math.ceil(block_size / segment_size))
+    for segment_number in range(1,total_segments+1):
+        if segment_number == total_segments:
+            segment_size = block_location + block_size - bitstream.pos
+        try:
+            segment = bitstream.read('bytes:%i' % int(segment_size/8))
+        except bitstring.ReadError:
+            segment = ''.encode('utf-8')
+
+    hash_state.update(segment.zfill(int(block_size/8)))
+
+    return hash_state.hexdigest()
+
+
+def write (target_path, k, hash_algorithm, excerpt_size = None):
+
+    writer = csv.writer(sys.stdout)
+
+    if not k > 0:
+        print('ERROR: k must be greater than zero.', file=sys.stderr)
+        exit(64)
+
+    # Print header.
+    writer.writerow(['number', 'size', 'excerpt', hash_algorithm])
+    sys.stdout.flush()
+
+    # These values have bytes as their units (for speed).
+    target_size = os.path.getsize(target_path)
+    full_block_size = int(math.ceil(target_size / k))
+    if excerpt_size == None:
+        excerpt_size = int(math.floor(math.log(target_size + 1)))
+
+    # Switch the units to bits.
+    target_size *= 8
+    full_block_size *= 8
+    excerpt_size *= 8
+
+    # If target is empty…
+    if not target_size:
+        for block_number in range(1,k+1):
+            writer.writerow([str(block_number), 0, '', ''])
+            sys.stdout.flush()
+        return
+
+    target_bitstream = bitstring.ConstBitStream(filename=target_path)
+    for block_number in range(1,k+1):
+        block_location = (block_number - 1) * full_block_size
+        remaining_size = (target_size - block_location)
+
+        # At EOF, use empty blocks, null excerpts and null hashes.
+        if remaining_size <= 0:
+            writer.writerow([str(block_number), 0, '', ''])
+            sys.stdout.flush()
+        else:
+            # Get block hash.
+            block_size = min(full_block_size, remaining_size)
+            block_hash = get_block_hash(target_bitstream, block_location,
+                                  block_size, hash_algorithm)
+            target_bitstream.pos = block_location
+
+            # Get excerpt.
+            excerpt_size = min(excerpt_size, block_size)
+            block_excerpt = target_bitstream.read('bytes:%i' %
+                                int(excerpt_size/8)).ljust(int(excerpt_size/8))
+            block_excerpt_b64 = base64.standard_b64encode(block_excerpt)
+
+            # Print results.
+            writer.writerow([str(block_number), block_size,
+                                block_excerpt_b64.decode('utf-8'), block_hash])
+            sys.stdout.flush()
+
+
+def read (target_path, check_transposition = False):
+
+    writer = csv.writer(sys.stdout)
+
+    last_location = 0
+    reader = csv.reader(sys.stdin)
+    for line in reader:
+
+        # First line is a special case: get hash algorithm; print header.
+        if reader.line_num == 1:
+            try:
+                if not line[:3] == ['number', 'size', 'excerpt']:
+                    print("ERROR: Unrecognised input header.", file=sys.stderr)
+                    exit(64)
+                hash_algorithm = line[3]
+                writer.writerow(['number', 'size', 'location'])
+                sys.stdout.flush()
+                continue
+            except IndexError:
+                print("ERROR: There must be at least four elements in the "
+                        "input header.", 
+                      file=sys.stderr)
+                exit(64)
+
+        # Read line of (actual) data (if it exists).
+        if len(line) < 4:
+            print("ERROR: There must be at least four elements in the "
+                    "every line of input data.", 
+                  file=sys.stderr)
+            exit(64)
+        block_number, block_size = int(line[0]), int(line[1])
+        block_excerpt_b64, block_hash = line[2], line[3]
+        
+        # Empty blocks are a special case.
+        if block_size == 0:
+            writer.writerow([str(block_number), block_size, 
+                            last_location])
+            sys.stdout.flush()
+            continue
+
+        # Sanity check input (and decode block_excerpt).
+        if block_number < 0 or block_size < 0:
+            print("ERROR: Negative block number or block size in input.", 
+                  file=sys.stderr)
+            exit(64)
+        try:
+            block_excerpt = base64.standard_b64decode(block_excerpt_b64)
+        except Exception:
+            print("ERROR: Block excerpt that is not valid standard Base64 in "
+                    "input.", 
+                  file=sys.stderr)
+            exit(64)
+        try:                                                                    
+            int(block_hash,16)
+        except Exception:
+            print("ERROR: Block hash that is not valid hexadecimal in input.",  
+                  file=sys.stderr)
+            exit(64)            
+
+        # Get bitstreams.
+        excerpt_bitstream = bitstring.ConstBitStream(block_excerpt)
+        target_bitstream = bitstring.ConstBitStream(filename=target_path)
+
+        # If transpositions are not being checked for, start looking for the
+        # next block one byte before the end of one that was last found intact.
+        if check_transposition:
+            next_start = 0
+        else:
+            next_start = last_location
+
+        # Look for the blocks by the excerpts, verifying with the hashes.
+        block_found = False
+        while next_start <= target_bitstream.len:
+            if block_excerpt:
+                found_bit = target_bitstream.find(excerpt_bitstream, 
+                                                  next_start)
+            else:
+                # A null excerpt matches everything.
+                found_bit = (next_start,)
+
+            # If the excerpt was found (or is null), check the hash of the next
+            # block_size bytes.
+            if found_bit:
+                read_hash = get_block_hash(target_bitstream, found_bit[0],
+                                     block_size, hash_algorithm)
+                # A null hash forces the inclusion of the block.
+                if (not block_hash) or read_hash == block_hash:
+                    writer.writerow([str(block_number), block_size,
+                                        found_bit[0]])
+                    sys.stdout.flush()
+                    block_found = True
+                    last_location = found_bit[0] + block_size
+                    break
+                next_start += 1
+            # Otherwise, end the search for this block.
+            else:
+                break
+        if not block_found:
+            writer.writerow([str(block_number), block_size, 'None'])
+            sys.stdout.flush()
+                        
+
+if __name__ == '__main__':
+
+    # Parse command‐line arguments.
+    parser = argparse.ArgumentParser(prog='blks', 
+                                     description='understand a file as '
+                                                    'divided into blocks')
+    parser.add_argument('--version', action='store_true', 
+                        help='print version information')
+    subparsers = parser.add_subparsers(dest='action', 
+                                       help='the action to be taken')
+
+    parser_write = subparsers.add_parser('write', help='print a CSV '
+                                            'describing a division of TARGET '
+                                            'into k blocks')
+    parser_write.add_argument('target', metavar='TARGET',
+                              help='the file to be considered')
+    parser_write.add_argument('k', metavar='K', type=int,
+                              help='the number of blocks')
+    parser_write.add_argument('--hash-algorithm', default='sha1', help='the '
+                                    'hash algorithm to be used for block '
+                                    'identification (default is ‘sha1’)')
+    parser_write.add_argument('--excerpt-size', type=int, 
+                              default=None, help='the excerpt size in bytes '
+                                    '(default is ‘floor(log(target_size+1)’)')
+
+    parser_read = subparsers.add_parser('read', help='find blocks described '
+                                                'by the CSV from stdin in '
+                                                'TARGET')
+    parser_read.add_argument('target', metavar='TARGET',
+                             help='the file to be examined')
+    parser_read.add_argument('-t', '--check-transposition',
+                             action='store_true', help='iff set, check for '
+                                    'transpositions blocks (slower)')
+
+    args = parser.parse_args()
+
+    # Act.
+    if args.version:
+        print('This is Version 1 of blks.')
+    elif args.action == 'write':
+        write(args.target, args.k, args.hash_algorithm, args.excerpt_size)
+    elif args.action == 'read':
+        read(args.target, args.check_transposition)
+    else:
+        parser.print_help()
+        exit(64)
+
+
+# vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
